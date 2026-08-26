@@ -1,0 +1,1162 @@
+-- =============================================================================
+-- SQL DATA ANALYSIS PROJECT
+-- E-Commerce Database Schema for MySQL Workbench
+-- Complete implementation with professional analytics capabilities
+-- =============================================================================
+
+-- Drop database if exists (for clean setup)
+DROP DATABASE IF EXISTS ecommerce_analytics;
+CREATE DATABASE ecommerce_analytics;
+USE ecommerce_analytics;
+
+-- =============================================================================
+-- SECTION 1: TABLE CREATION WITH PROPER CONSTRAINTS
+-- =============================================================================
+
+-- 1.1 Users Table
+CREATE TABLE users (
+    user_id INT AUTO_INCREMENT PRIMARY KEY,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    first_name VARCHAR(50) NOT NULL,
+    last_name VARCHAR(50) NOT NULL,
+    date_of_birth DATE,
+    phone_number VARCHAR(20),
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    last_login TIMESTAMP NULL,
+    
+    INDEX idx_email (email),
+    INDEX idx_name (last_name, first_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 1.2 User Addresses Table
+CREATE TABLE user_addresses (
+    address_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    address_type ENUM('shipping', 'billing', 'both') NOT NULL,
+    address_line1 VARCHAR(255) NOT NULL,
+    address_line2 VARCHAR(255),
+    city VARCHAR(100) NOT NULL,
+    state VARCHAR(50) NOT NULL,
+    postal_code VARCHAR(20) NOT NULL,
+    country VARCHAR(50) DEFAULT 'USA',
+    is_default BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    INDEX idx_user_address (user_id, is_default)
+) ENGINE=InnoDB;
+
+-- 1.3 Categories Table (Self-referencing for hierarchy)
+CREATE TABLE categories (
+    category_id INT AUTO_INCREMENT PRIMARY KEY,
+    category_name VARCHAR(100) NOT NULL,
+    description TEXT,
+    parent_category_id INT,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (parent_category_id) REFERENCES categories(category_id),
+    INDEX idx_category_parent (parent_category_id),
+    INDEX idx_category_name (category_name)
+) ENGINE=InnoDB;
+
+-- 1.4 Products Table
+CREATE TABLE products (
+    product_id INT AUTO_INCREMENT PRIMARY KEY,
+    category_id INT NOT NULL,
+    product_name VARCHAR(200) NOT NULL,
+    description TEXT,
+    sku VARCHAR(50) UNIQUE NOT NULL,
+    unit_price DECIMAL(10,2) NOT NULL,
+    cost_price DECIMAL(10,2),
+    weight DECIMAL(8,2),
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (category_id) REFERENCES categories(category_id),
+    INDEX idx_category (category_id),
+    INDEX idx_product_name (product_name),
+    INDEX idx_sku (sku),
+    CONSTRAINT chk_price_positive CHECK (unit_price > 0),
+    CONSTRAINT chk_cost_price CHECK (cost_price IS NULL OR cost_price > 0)
+) ENGINE=InnoDB;
+
+-- 1.5 Inventory Table
+CREATE TABLE inventory (
+    inventory_id INT AUTO_INCREMENT PRIMARY KEY,
+    product_id INT UNIQUE NOT NULL,
+    quantity_on_hand INT DEFAULT 0,
+    quantity_reserved INT DEFAULT 0,
+    reorder_level INT DEFAULT 10,
+    reorder_quantity INT DEFAULT 50,
+    last_restocked TIMESTAMP NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (product_id) REFERENCES products(product_id) ON DELETE CASCADE,
+    INDEX idx_low_stock (quantity_on_hand, reorder_level),
+    CONSTRAINT chk_quantity_non_negative CHECK (quantity_on_hand >= 0),
+    CONSTRAINT chk_reserved_non_negative CHECK (quantity_reserved >= 0)
+) ENGINE=InnoDB;
+
+-- 1.6 Orders Table
+CREATE TABLE orders (
+    order_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    order_status ENUM('pending', 'processing', 'shipped', 'delivered', 'cancelled') NOT NULL,
+    payment_method ENUM('credit_card', 'paypal', 'bank_transfer', 'cash_on_delivery') NOT NULL,
+    payment_status ENUM('pending', 'paid', 'failed', 'refunded') DEFAULT 'pending',
+    shipping_address_id INT NOT NULL,
+    billing_address_id INT NOT NULL,
+    subtotal DECIMAL(10,2) NOT NULL,
+    tax_amount DECIMAL(10,2) DEFAULT 0,
+    shipping_amount DECIMAL(10,2) DEFAULT 0,
+    discount_amount DECIMAL(10,2) DEFAULT 0,
+    total_amount DECIMAL(10,2) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (user_id) REFERENCES users(user_id),
+    FOREIGN KEY (shipping_address_id) REFERENCES user_addresses(address_id),
+    FOREIGN KEY (billing_address_id) REFERENCES user_addresses(address_id),
+    INDEX idx_user_orders (user_id),
+    INDEX idx_order_date (order_date),
+    INDEX idx_order_status (order_status),
+    INDEX idx_payment_status (payment_status)
+) ENGINE=InnoDB;
+
+-- 1.7 Order Items Table
+CREATE TABLE order_items (
+    order_item_id INT AUTO_INCREMENT PRIMARY KEY,
+    order_id INT NOT NULL,
+    product_id INT NOT NULL,
+    quantity INT NOT NULL,
+    unit_price DECIMAL(10,2) NOT NULL,
+    discount_percent DECIMAL(5,2) DEFAULT 0,
+    total_price DECIMAL(10,2) NOT NULL,
+    
+    FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE CASCADE,
+    FOREIGN KEY (product_id) REFERENCES products(product_id),
+    INDEX idx_order (order_id),
+    INDEX idx_product (product_id),
+    CONSTRAINT chk_quantity_positive CHECK (quantity > 0)
+) ENGINE=InnoDB;
+
+-- 1.8 Product Reviews Table
+CREATE TABLE product_reviews (
+    review_id INT AUTO_INCREMENT PRIMARY KEY,
+    product_id INT NOT NULL,
+    user_id INT NOT NULL,
+    rating INT NOT NULL,
+    review_text TEXT,
+    is_verified_purchase BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (product_id) REFERENCES products(product_id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    INDEX idx_product_reviews (product_id),
+    INDEX idx_user_reviews (user_id),
+    CONSTRAINT chk_rating_range CHECK (rating BETWEEN 1 AND 5),
+    UNIQUE KEY unique_user_product_review (user_id, product_id)
+) ENGINE=InnoDB;
+
+-- 1.9 Shopping Cart Table (with duplicate prevention)
+CREATE TABLE shopping_cart (
+    cart_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    product_id INT NOT NULL,
+    quantity INT NOT NULL,
+    added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (product_id) REFERENCES products(product_id) ON DELETE CASCADE,
+    INDEX idx_user_cart (user_id),
+    UNIQUE KEY unique_user_product (user_id, product_id),
+    CONSTRAINT chk_cart_quantity CHECK (quantity > 0)
+) ENGINE=InnoDB;
+
+-- 1.10 Product Suppliers Table
+CREATE TABLE suppliers (
+    supplier_id INT AUTO_INCREMENT PRIMARY KEY,
+    supplier_name VARCHAR(100) NOT NULL,
+    contact_name VARCHAR(100),
+    contact_email VARCHAR(255),
+    phone VARCHAR(20),
+    address TEXT,
+    payment_terms VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- 1.11 Product Suppliers Mapping
+CREATE TABLE product_suppliers (
+    product_id INT NOT NULL,
+    supplier_id INT NOT NULL,
+    supply_price DECIMAL(10,2) NOT NULL,
+    lead_time_days INT,
+    is_preferred BOOLEAN DEFAULT FALSE,
+    
+    PRIMARY KEY (product_id, supplier_id),
+    FOREIGN KEY (product_id) REFERENCES products(product_id) ON DELETE CASCADE,
+    FOREIGN KEY (supplier_id) REFERENCES suppliers(supplier_id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- 1.12 Audit Log Table
+CREATE TABLE audit_log (
+    log_id INT AUTO_INCREMENT PRIMARY KEY,
+    table_name VARCHAR(50),
+    action_type ENUM('INSERT', 'UPDATE', 'DELETE'),
+    record_id INT,
+    old_values JSON,
+    new_values JSON,
+    changed_by VARCHAR(100),
+    changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    INDEX idx_audit_table (table_name, changed_at)
+) ENGINE=InnoDB;
+
+-- =============================================================================
+-- SECTION 2: STORED PROCEDURES
+-- =============================================================================
+
+DELIMITER $$
+
+-- 2.1 Procedure to get customer order history
+CREATE PROCEDURE GetCustomerOrderHistory(IN p_user_id INT)
+BEGIN
+    SELECT 
+        o.order_id,
+        o.order_date,
+        o.order_status,
+        o.total_amount,
+        COUNT(oi.order_item_id) as total_items,
+        GROUP_CONCAT(DISTINCT p.product_name SEPARATOR ', ') as products
+    FROM orders o
+    JOIN order_items oi ON o.order_id = oi.order_id
+    JOIN products p ON oi.product_id = p.product_id
+    WHERE o.user_id = p_user_id
+    GROUP BY o.order_id, o.order_date, o.order_status, o.total_amount
+    ORDER BY o.order_date DESC;
+END$$
+
+-- 2.2 Procedure to calculate monthly sales report
+CREATE PROCEDURE GetMonthlySalesReport(IN p_year INT, IN p_month INT)
+BEGIN
+    SELECT 
+        DATE_FORMAT(o.order_date, '%Y-%m-%d') as sale_date,
+        COUNT(DISTINCT o.order_id) as total_orders,
+        COUNT(DISTINCT o.user_id) as unique_customers,
+        SUM(o.total_amount) as total_revenue,
+        AVG(o.total_amount) as avg_order_value,
+        SUM(oi.quantity) as total_items_sold
+    FROM orders o
+    JOIN order_items oi ON o.order_id = oi.order_id
+    WHERE YEAR(o.order_date) = p_year 
+      AND MONTH(o.order_date) = p_month
+      AND o.order_status != 'cancelled'
+    GROUP BY DATE_FORMAT(o.order_date, '%Y-%m-%d')
+    ORDER BY sale_date;
+END$$
+
+-- 2.3 Procedure to get top selling products
+CREATE PROCEDURE GetTopSellingProducts(IN p_limit INT)
+BEGIN
+    SELECT 
+        p.product_id,
+        p.product_name,
+        c.category_name,
+        SUM(oi.quantity) as total_quantity_sold,
+        SUM(oi.total_price) as total_revenue,
+        COUNT(DISTINCT o.order_id) as number_of_orders,
+        AVG(pr.rating) as avg_rating
+    FROM products p
+    JOIN categories c ON p.category_id = c.category_id
+    LEFT JOIN order_items oi ON p.product_id = oi.product_id
+    LEFT JOIN orders o ON oi.order_id = o.order_id AND o.order_status = 'delivered'
+    LEFT JOIN product_reviews pr ON p.product_id = pr.product_id
+    GROUP BY p.product_id, p.product_name, c.category_name
+    ORDER BY total_quantity_sold DESC
+    LIMIT p_limit;
+END$$
+
+-- 2.4 Procedure to update inventory after order
+CREATE PROCEDURE UpdateInventoryAfterOrder(IN p_order_id INT)
+BEGIN
+    DECLARE done INT DEFAULT FALSE;
+    DECLARE v_product_id INT;
+    DECLARE v_quantity INT;
+    
+    DECLARE cur CURSOR FOR 
+        SELECT product_id, quantity 
+        FROM order_items 
+        WHERE order_id = p_order_id;
+    
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
+    
+    OPEN cur;
+    
+    read_loop: LOOP
+        FETCH cur INTO v_product_id, v_quantity;
+        IF done THEN
+            LEAVE read_loop;
+        END IF;
+        
+        UPDATE inventory 
+        SET quantity_on_hand = quantity_on_hand - v_quantity,
+            quantity_reserved = quantity_reserved - v_quantity
+        WHERE product_id = v_product_id;
+    END LOOP;
+    
+    CLOSE cur;
+END$$
+
+DELIMITER ;
+
+-- =============================================================================
+-- SECTION 3: TRIGGERS
+-- =============================================================================
+
+DELIMITER $$
+
+-- 3.1 Trigger to update inventory when order is placed
+CREATE TRIGGER after_order_insert
+AFTER INSERT ON orders
+FOR EACH ROW
+BEGIN
+    IF NEW.order_status = 'processing' THEN
+        UPDATE inventory i
+        JOIN order_items oi ON i.product_id = oi.product_id
+        SET i.quantity_reserved = i.quantity_reserved + oi.quantity
+        WHERE oi.order_id = NEW.order_id;
+    END IF;
+END$$
+
+-- 3.2 Trigger to calculate order totals
+CREATE TRIGGER before_order_items_insert
+BEFORE INSERT ON order_items
+FOR EACH ROW
+BEGIN
+    SET NEW.total_price = NEW.quantity * NEW.unit_price * (1 - NEW.discount_percent/100);
+END$$
+
+-- 3.3 Audit Log Trigger for Users
+CREATE TRIGGER users_update_audit
+AFTER UPDATE ON users
+FOR EACH ROW
+BEGIN
+    INSERT INTO audit_log (table_name, action_type, record_id, old_values, new_values, changed_by)
+    VALUES ('users', 'UPDATE', NEW.user_id,
+            JSON_OBJECT('email', OLD.email, 'first_name', OLD.first_name, 'last_name', OLD.last_name),
+            JSON_OBJECT('email', NEW.email, 'first_name', NEW.first_name, 'last_name', NEW.last_name),
+            CURRENT_USER());
+END$$
+
+DELIMITER ;
+
+-- =============================================================================
+-- SECTION 4: ANALYTICS VIEWS
+-- =============================================================================
+
+-- 4.1 Customer Lifetime Value View
+CREATE VIEW customer_lifetime_value AS
+SELECT 
+    u.user_id,
+    u.email,
+    CONCAT(u.first_name, ' ', u.last_name) as customer_name,
+    COUNT(DISTINCT o.order_id) as total_orders,
+    COALESCE(SUM(o.total_amount), 0) as lifetime_value,
+    COALESCE(AVG(o.total_amount), 0) as avg_order_value,
+    MIN(o.order_date) as first_purchase,
+    MAX(o.order_date) as last_purchase,
+    DATEDIFF(COALESCE(MAX(o.order_date), NOW()), COALESCE(MIN(o.order_date), NOW())) as customer_lifetime_days
+FROM users u
+LEFT JOIN orders o ON u.user_id = o.user_id AND o.order_status = 'delivered'
+GROUP BY u.user_id, u.email, customer_name;
+
+-- 4.2 Daily Sales Summary View
+CREATE VIEW daily_sales_summary AS
+SELECT 
+    DATE(o.order_date) as sale_date,
+    COUNT(DISTINCT o.order_id) as total_orders,
+    COUNT(DISTINCT o.user_id) as unique_customers,
+    COALESCE(SUM(o.total_amount), 0) as revenue,
+    COALESCE(SUM(oi.total_price - (oi.quantity * COALESCE(p.cost_price, 0))), 0) as profit_margin,
+    COUNT(DISTINCT oi.product_id) as unique_products_sold,
+    COALESCE(SUM(oi.quantity), 0) as total_items_sold
+FROM orders o
+JOIN order_items oi ON o.order_id = oi.order_id
+JOIN products p ON oi.product_id = p.product_id
+WHERE o.order_status = 'delivered'
+GROUP BY DATE(o.order_date);
+
+-- 4.3 Product Performance View
+CREATE VIEW product_performance AS
+SELECT 
+    p.product_id,
+    p.product_name,
+    c.category_name,
+    p.unit_price,
+    p.cost_price,
+    COALESCE(SUM(oi.quantity), 0) as total_sold,
+    COALESCE(SUM(oi.total_price), 0) as total_revenue,
+    COALESCE(AVG(pr.rating), 0) as avg_rating,
+    COUNT(DISTINCT pr.review_id) as review_count,
+    i.quantity_on_hand as current_stock,
+    CASE 
+        WHEN i.quantity_on_hand <= i.reorder_level THEN 'Low Stock'
+        WHEN i.quantity_on_hand <= i.reorder_level * 2 THEN 'Medium Stock'
+        ELSE 'High Stock'
+    END as stock_status
+FROM products p
+LEFT JOIN categories c ON p.category_id = c.category_id
+LEFT JOIN order_items oi ON p.product_id = oi.product_id
+LEFT JOIN orders o ON oi.order_id = o.order_id AND o.order_status = 'delivered'
+LEFT JOIN product_reviews pr ON p.product_id = pr.product_id
+LEFT JOIN inventory i ON p.product_id = i.product_id
+GROUP BY p.product_id, p.product_name, c.category_name, p.unit_price, p.cost_price,
+         i.quantity_on_hand, i.reorder_level;
+
+-- 4.4 Inventory Status View
+CREATE VIEW inventory_status AS
+SELECT 
+    p.product_id,
+    p.product_name,
+    p.sku,
+    i.quantity_on_hand,
+    i.quantity_reserved,
+    (i.quantity_on_hand - i.quantity_reserved) as available_quantity,
+    i.reorder_level,
+    i.reorder_quantity,
+    i.last_restocked,
+    CASE 
+        WHEN (i.quantity_on_hand - i.quantity_reserved) <= 0 THEN 'Out of Stock'
+        WHEN (i.quantity_on_hand - i.quantity_reserved) <= i.reorder_level THEN 'Reorder Now'
+        ELSE 'Sufficient Stock'
+    END as stock_alert,
+    DATEDIFF(NOW(), i.last_restocked) as days_since_restock
+FROM products p
+JOIN inventory i ON p.product_id = i.product_id;
+
+-- 4.5 Category Performance View
+CREATE VIEW category_performance AS
+WITH category_revenue AS (
+    SELECT 
+        c.category_id,
+        c.category_name,
+        COUNT(DISTINCT p.product_id) as total_products,
+        COALESCE(SUM(oi.quantity), 0) as items_sold,
+        COALESCE(SUM(oi.total_price), 0) as revenue,
+        COALESCE(AVG(pr.rating), 0) as avg_category_rating
+    FROM categories c
+    LEFT JOIN products p ON c.category_id = p.category_id
+    LEFT JOIN order_items oi ON p.product_id = oi.product_id
+    LEFT JOIN orders o ON oi.order_id = o.order_id AND o.order_status = 'delivered'
+    LEFT JOIN product_reviews pr ON p.product_id = pr.product_id
+    GROUP BY c.category_id, c.category_name
+),
+total_revenue_calc AS (
+    SELECT COALESCE(SUM(revenue), 0) as total_revenue FROM category_revenue
+)
+SELECT 
+    cr.*,
+    ROUND(
+        100.0 * cr.revenue / NULLIF(COALESCE(tr.total_revenue, 0), 0),
+        2
+    ) as revenue_share_pct
+FROM category_revenue cr
+CROSS JOIN total_revenue_calc tr
+ORDER BY cr.revenue DESC;
+
+-- =============================================================================
+-- SECTION 5: SAMPLE DATA INSERTION
+-- =============================================================================
+
+-- 5.1 Insert Users
+INSERT INTO users (email, username, password_hash, first_name, last_name, date_of_birth, phone_number) VALUES
+('john.doe@email.com', 'johndoe', 'hash123', 'John', 'Doe', '1990-05-15', '555-0101'),
+('jane.smith@email.com', 'janesmith', 'hash456', 'Jane', 'Smith', '1988-08-22', '555-0102'),
+('bob.wilson@email.com', 'bobwilson', 'hash789', 'Bob', 'Wilson', '1992-03-10', '555-0103'),
+('alice.brown@email.com', 'alicebrown', 'hash101', 'Alice', 'Brown', '1985-11-30', '555-0104'),
+('charlie.davis@email.com', 'charlied', 'hash102', 'Charlie', 'Davis', '1995-07-25', '555-0105'),
+('diana.prince@email.com', 'dianap', 'hash103', 'Diana', 'Prince', '1991-09-18', '555-0106'),
+('edward.norton@email.com', 'edwardn', 'hash104', 'Edward', 'Norton', '1987-12-03', '555-0107'),
+('fiona.green@email.com', 'fionag', 'hash105', 'Fiona', 'Green', '1993-04-12', '555-0108');
+
+-- 5.2 Insert Addresses
+INSERT INTO user_addresses (user_id, address_type, address_line1, city, state, postal_code, is_default) VALUES
+(1, 'both', '123 Main St', 'New York', 'NY', '10001', TRUE),
+(2, 'both', '456 Oak Ave', 'Los Angeles', 'CA', '90001', TRUE),
+(3, 'both', '789 Pine Rd', 'Chicago', 'IL', '60601', TRUE),
+(4, 'both', '321 Elm St', 'Houston', 'TX', '77001', TRUE),
+(5, 'both', '654 Maple Dr', 'Phoenix', 'AZ', '85001', TRUE),
+(6, 'both', '987 Cedar Ln', 'Philadelphia', 'PA', '19101', TRUE),
+(7, 'both', '147 Birch St', 'San Antonio', 'TX', '78201', TRUE),
+(8, 'both', '258 Spruce Ave', 'San Diego', 'CA', '92101', TRUE);
+
+-- 5.3 Insert Categories
+INSERT INTO categories (category_name, description, parent_category_id) VALUES
+('Electronics', 'Electronic devices and accessories', NULL),
+('Computers', 'Desktop and laptop computers', 1),
+('Smartphones', 'Mobile phones and accessories', 1),
+('Audio', 'Headphones, speakers, and audio equipment', 1),
+('Clothing', 'Apparel and fashion items', NULL),
+('Men\'s Clothing', 'Clothing for men', 5),
+('Women\'s Clothing', 'Clothing for women', 5),
+('Books', 'Books and publications', NULL),
+('Home & Garden', 'Home improvement and garden supplies', NULL);
+
+-- 5.4 Insert Products
+INSERT INTO products (category_id, product_name, description, sku, unit_price, cost_price, weight) VALUES
+(2, 'MacBook Pro 16"', 'Latest model with M3 chip', 'MAC-BK-001', 2499.99, 2100.00, 4.3),
+(2, 'Dell XPS 15', 'Premium Windows laptop', 'DELL-XPS-001', 1899.99, 1600.00, 4.2),
+(3, 'iPhone 15 Pro', 'Latest iPhone model', 'IPH-15P-001', 1099.99, 850.00, 0.5),
+(3, 'Samsung Galaxy S24', 'Android flagship', 'SAM-S24-001', 999.99, 800.00, 0.5),
+(4, 'Sony WH-1000XM4', 'Noise cancelling headphones', 'SONY-HP-001', 349.99, 250.00, 0.6),
+(4, 'Bose QuietComfort 45', 'Premium headphones', 'BOSE-QC-001', 329.99, 230.00, 0.6),
+(6, 'Levi\'s 501 Jeans', 'Classic fit jeans', 'LEV-501-001', 89.99, 45.00, 1.2),
+(7, 'Summer Dress', 'Floral print dress', 'SUM-DR-001', 59.99, NULL, 0.8),
+(8, 'Python Programming Book', 'Learning Python', 'BK-PY-001', 49.99, 25.00, 1.5),
+(9, 'Garden Tool Set', 'Complete garden toolkit', 'GARDEN-001', 79.99, 45.00, 8.5);
+
+-- 5.5 Insert Inventory
+INSERT INTO inventory (product_id, quantity_on_hand, quantity_reserved, reorder_level, last_restocked) VALUES
+(1, 50, 5, 10, DATE_SUB(NOW(), INTERVAL 5 DAY)),
+(2, 30, 3, 10, DATE_SUB(NOW(), INTERVAL 7 DAY)),
+(3, 100, 15, 20, DATE_SUB(NOW(), INTERVAL 3 DAY)),
+(4, 80, 8, 20, DATE_SUB(NOW(), INTERVAL 4 DAY)),
+(5, 150, 12, 30, DATE_SUB(NOW(), INTERVAL 2 DAY)),
+(6, 120, 10, 30, DATE_SUB(NOW(), INTERVAL 6 DAY)),
+(7, 200, 25, 40, DATE_SUB(NOW(), INTERVAL 10 DAY)),
+(8, 180, 20, 40, DATE_SUB(NOW(), INTERVAL 8 DAY)),
+(9, 90, 5, 15, DATE_SUB(NOW(), INTERVAL 12 DAY)),
+(10, 40, 2, 10, DATE_SUB(NOW(), INTERVAL 15 DAY));
+
+-- 5.6 Insert Orders
+INSERT INTO orders (user_id, order_date, order_status, payment_method, payment_status, 
+                   shipping_address_id, billing_address_id, subtotal, tax_amount, 
+                   shipping_amount, discount_amount, total_amount) VALUES
+(1, DATE_SUB(NOW(), INTERVAL 90 DAY), 'delivered', 'credit_card', 'paid', 1, 1, 2599.98, 208.00, 0, 0, 2807.98),
+(2, DATE_SUB(NOW(), INTERVAL 85 DAY), 'delivered', 'paypal', 'paid', 2, 2, 1099.99, 88.00, 0, 0, 1187.99),
+(3, DATE_SUB(NOW(), INTERVAL 80 DAY), 'delivered', 'credit_card', 'paid', 3, 3, 1899.99, 152.00, 0, 0, 2051.99),
+(4, DATE_SUB(NOW(), INTERVAL 75 DAY), 'delivered', 'bank_transfer', 'paid', 4, 4, 349.99, 28.00, 5.99, 0, 383.98),
+(1, DATE_SUB(NOW(), INTERVAL 70 DAY), 'delivered', 'credit_card', 'paid', 1, 1, 89.99, 7.20, 0, 0, 97.19),
+(5, DATE_SUB(NOW(), INTERVAL 65 DAY), 'delivered', 'paypal', 'paid', 5, 5, 59.99, 4.80, 5.99, 0, 70.78),
+(2, DATE_SUB(NOW(), INTERVAL 60 DAY), 'delivered', 'credit_card', 'paid', 2, 2, 329.99, 26.40, 0, 0, 356.39),
+(6, DATE_SUB(NOW(), INTERVAL 55 DAY), 'delivered', 'credit_card', 'paid', 6, 6, 49.99, 4.00, 3.99, 0, 57.98),
+(7, DATE_SUB(NOW(), INTERVAL 50 DAY), 'delivered', 'paypal', 'paid', 7, 7, 79.99, 6.40, 5.99, 0, 92.38),
+(3, DATE_SUB(NOW(), INTERVAL 45 DAY), 'delivered', 'bank_transfer', 'paid', 3, 3, 2499.99, 200.00, 0, 0, 2699.99),
+(8, DATE_SUB(NOW(), INTERVAL 40 DAY), 'delivered', 'credit_card', 'paid', 8, 8, 999.99, 80.00, 0, 0, 1079.99),
+(4, DATE_SUB(NOW(), INTERVAL 35 DAY), 'delivered', 'paypal', 'paid', 4, 4, 329.99, 26.40, 0, 0, 356.39),
+(5, DATE_SUB(NOW(), INTERVAL 30 DAY), 'delivered', 'credit_card', 'paid', 5, 5, 1899.99, 152.00, 0, 0, 2051.99),
+(1, DATE_SUB(NOW(), INTERVAL 25 DAY), 'shipped', 'credit_card', 'paid', 1, 1, 449.98, 36.00, 0, 0, 485.98),
+(2, DATE_SUB(NOW(), INTERVAL 20 DAY), 'processing', 'paypal', 'paid', 2, 2, 139.98, 11.20, 5.99, 0, 157.17),
+(6, DATE_SUB(NOW(), INTERVAL 15 DAY), 'pending', 'credit_card', 'pending', 6, 6, 1099.99, 88.00, 0, 0, 1187.99),
+(7, DATE_SUB(NOW(), INTERVAL 10 DAY), 'pending', 'bank_transfer', 'pending', 7, 7, 2499.99, 200.00, 0, 0, 2699.99);
+
+-- 5.7 Insert Order Items
+INSERT INTO order_items (order_id, product_id, quantity, unit_price, discount_percent, total_price) VALUES
+(1, 1, 1, 2499.99, 0, 2499.99),
+(1, 5, 1, 349.99, 0, 349.99),
+(2, 3, 1, 1099.99, 0, 1099.99),
+(3, 2, 1, 1899.99, 0, 1899.99),
+(4, 5, 1, 349.99, 0, 349.99),
+(5, 7, 1, 89.99, 0, 89.99),
+(6, 8, 1, 59.99, 0, 59.99),
+(7, 6, 1, 329.99, 0, 329.99),
+(8, 9, 1, 49.99, 0, 49.99),
+(9, 10, 1, 79.99, 0, 79.99),
+(10, 1, 1, 2499.99, 0, 2499.99),
+(11, 4, 1, 999.99, 0, 999.99),
+(12, 6, 1, 329.99, 0, 329.99),
+(13, 2, 1, 1899.99, 0, 1899.99),
+(14, 5, 1, 349.99, 0, 349.99),
+(14, 6, 1, 329.99, 0, 329.99),
+(15, 7, 1, 89.99, 0, 89.99),
+(15, 8, 1, 59.99, 0, 59.99),
+(16, 3, 1, 1099.99, 0, 1099.99),
+(17, 1, 1, 2499.99, 0, 2499.99);
+
+-- 5.8 Insert Product Reviews
+INSERT INTO product_reviews (product_id, user_id, rating, review_text, is_verified_purchase) VALUES
+(1, 1, 5, 'Amazing laptop! Fast and powerful.', TRUE),
+(1, 3, 4, 'Great performance, but expensive', TRUE),
+(2, 3, 4, 'Solid build quality', TRUE),
+(3, 2, 5, 'Best phone I ever had', TRUE),
+(3, 6, 4, 'Great camera', FALSE),
+(4, 8, 5, 'Excellent Android phone', TRUE),
+(5, 1, 5, 'Best noise cancellation', TRUE),
+(5, 4, 5, 'Worth every penny', TRUE),
+(6, 2, 4, 'Very comfortable', TRUE),
+(6, 7, 5, 'Great sound quality', FALSE),
+(7, 1, 4, 'Classic jeans, good fit', TRUE),
+(7, 5, 5, 'Perfect fit', TRUE),
+(8, 5, 4, 'Nice dress, good quality', TRUE),
+(9, 6, 5, 'Excellent Python book', TRUE),
+(10, 7, 4, 'Good tool set', TRUE);
+
+-- 5.9 Insert Suppliers
+INSERT INTO suppliers (supplier_name, contact_name, contact_email, phone, payment_terms) VALUES
+('TechSupply Co.', 'Mike Johnson', 'mike@techsupply.com', '555-1001', 'Net 30'),
+('ElectroWorld', 'Sarah Chen', 'sarah@electroworld.com', '555-1002', 'Net 45'),
+('FashionHub', 'Emma Davis', 'emma@fashionhub.com', '555-1003', 'Net 30'),
+('BookDistributors Inc.', 'Tom Wilson', 'tom@bookdist.com', '555-1004', 'Net 60'),
+('HomeGoods Supply', 'Lisa Brown', 'lisa@homegoods.com', '555-1005', 'Net 30');
+
+-- 5.10 Insert Product-Supplier Mapping
+INSERT INTO product_suppliers (product_id, supplier_id, supply_price, lead_time_days, is_preferred) VALUES
+(1, 1, 2100.00, 7, TRUE),
+(2, 1, 1600.00, 7, FALSE),
+(2, 2, 1580.00, 5, TRUE),
+(3, 2, 850.00, 5, TRUE),
+(4, 2, 800.00, 5, TRUE),
+(5, 1, 250.00, 10, TRUE),
+(6, 1, 230.00, 10, FALSE),
+(6, 2, 225.00, 8, TRUE),
+(7, 3, 45.00, 14, TRUE),
+(8, 3, 30.00, 14, TRUE),
+(9, 4, 25.00, 7, TRUE),
+(10, 5, 45.00, 10, TRUE);
+
+-- 5.11 Insert Shopping Cart Items
+INSERT INTO shopping_cart (user_id, product_id, quantity) VALUES
+(3, 5, 1),
+(4, 1, 1),
+(5, 8, 2),
+(6, 3, 1),
+(7, 10, 1),
+(8, 6, 1)
+ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity);
+
+-- =============================================================================
+-- SECTION 6: COMPLEX ANALYTICAL QUERIES
+-- =============================================================================
+
+-- 6.1 Customer Segmentation using Window Functions
+WITH customer_metrics AS (
+    SELECT 
+        u.user_id,
+        CONCAT(u.first_name, ' ', u.last_name) as customer_name,
+        COUNT(DISTINCT o.order_id) as order_count,
+        COALESCE(SUM(o.total_amount), 0) as total_spent,
+        COALESCE(AVG(o.total_amount), 0) as avg_order_value,
+        MAX(o.order_date) as last_order_date,
+        DATEDIFF(NOW(), COALESCE(MAX(o.order_date), NOW())) as days_since_last_order
+    FROM users u
+    LEFT JOIN orders o ON u.user_id = o.user_id AND o.order_status = 'delivered'
+    GROUP BY u.user_id, u.first_name, u.last_name
+),
+customer_segments AS (
+    SELECT 
+        *,
+        NTILE(4) OVER (ORDER BY total_spent DESC) as spending_quartile,
+        CASE 
+            WHEN days_since_last_order <= 30 THEN 'Active'
+            WHEN days_since_last_order <= 60 THEN 'Recent'
+            WHEN days_since_last_order <= 90 THEN 'Lapsed'
+            ELSE 'Inactive'
+        END as activity_status,
+        CASE 
+            WHEN order_count >= 5 THEN 'VIP'
+            WHEN order_count >= 2 THEN 'Regular'
+            ELSE 'Occasional'
+        END as customer_type,
+        SUM(total_spent) OVER() as total_revenue,
+        ROUND(100.0 * total_spent / NULLIF(SUM(total_spent) OVER(), 0), 2) as pct_of_total
+    FROM customer_metrics
+)
+SELECT * FROM customer_segments
+ORDER BY total_spent DESC;
+
+-- 6.2 Cohort Analysis - Customer Retention
+WITH cohorts AS (
+    SELECT 
+        u.user_id,
+        DATE_FORMAT(u.created_at, '%Y-%m') as cohort_month,
+        DATE_FORMAT(o.order_date, '%Y-%m') as order_month,
+        TIMESTAMPDIFF(MONTH, u.created_at, o.order_date) as months_since_first
+    FROM users u
+    LEFT JOIN orders o ON u.user_id = o.user_id AND o.order_status = 'delivered'
+),
+cohort_size AS (
+    SELECT 
+        cohort_month,
+        COUNT(DISTINCT user_id) as total_users
+    FROM cohorts
+    GROUP BY cohort_month
+),
+retention_table AS (
+    SELECT 
+        c.cohort_month,
+        cs.total_users,
+        c.months_since_first,
+        COUNT(DISTINCT c.user_id) as retained_users,
+        ROUND(100.0 * COUNT(DISTINCT c.user_id) / NULLIF(cs.total_users, 0), 2) as retention_rate
+    FROM cohorts c
+    JOIN cohort_size cs ON c.cohort_month = cs.cohort_month
+    WHERE c.months_since_first IS NOT NULL
+    GROUP BY c.cohort_month, cs.total_users, c.months_since_first
+)
+SELECT 
+    cohort_month,
+    MAX(CASE WHEN months_since_first = 0 THEN retention_rate END) as 'Month 0',
+    MAX(CASE WHEN months_since_first = 1 THEN retention_rate END) as 'Month 1',
+    MAX(CASE WHEN months_since_first = 2 THEN retention_rate END) as 'Month 2',
+    MAX(CASE WHEN months_since_first = 3 THEN retention_rate END) as 'Month 3'
+FROM retention_table
+GROUP BY cohort_month
+ORDER BY cohort_month;
+
+-- 6.3 Product Affinity Analysis (Market Basket)
+SELECT 
+    a.product_name as product_1,
+    b.product_name as product_2,
+    COUNT(*) as times_bought_together,
+    ROUND(100.0 * COUNT(*) / NULLIF((
+        SELECT COUNT(DISTINCT order_id) FROM order_items WHERE product_id = a.product_id
+    ), 0), 2) as confidence
+FROM order_items oi1
+JOIN order_items oi2 ON oi1.order_id = oi2.order_id AND oi1.product_id < oi2.product_id
+JOIN products a ON oi1.product_id = a.product_id
+JOIN products b ON oi2.product_id = b.product_id
+GROUP BY a.product_name, b.product_name
+HAVING times_bought_together > 1
+ORDER BY times_bought_together DESC
+LIMIT 10;
+
+-- 6.4 Moving Averages and Trends
+WITH daily_sales AS (
+    SELECT 
+        DATE(o.order_date) as sale_date,
+        SUM(o.total_amount) as daily_revenue,
+        COUNT(DISTINCT o.order_id) as daily_orders
+    FROM orders o
+    WHERE o.order_status = 'delivered'
+    GROUP BY DATE(o.order_date)
+)
+SELECT 
+    sale_date,
+    daily_revenue,
+    daily_orders,
+    AVG(daily_revenue) OVER (ORDER BY sale_date ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) as revenue_7day_avg,
+    AVG(daily_revenue) OVER (ORDER BY sale_date ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) as revenue_30day_avg,
+    ROUND(100.0 * (daily_revenue - LAG(daily_revenue, 7) OVER (ORDER BY sale_date)) / 
+          NULLIF(LAG(daily_revenue, 7) OVER (ORDER BY sale_date), 0), 2) as pct_change_week_over_week
+FROM daily_sales
+ORDER BY sale_date;
+
+-- 6.5 Inventory Turnover Analysis
+WITH product_sales AS (
+    SELECT 
+        p.product_id,
+        p.product_name,
+        c.category_name,
+        i.quantity_on_hand,
+        COALESCE(SUM(
+            CASE 
+                WHEN o.order_status = 'delivered'
+                AND o.order_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+                THEN oi.quantity
+                ELSE 0
+            END
+        ), 0) as units_sold_last_30_days,
+        COUNT(DISTINCT 
+            CASE 
+                WHEN o.order_status = 'delivered'
+                AND o.order_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+                THEN o.order_id
+                ELSE NULL
+            END
+        ) as orders_in_last_30_days
+    FROM products p
+    JOIN categories c ON p.category_id = c.category_id
+    JOIN inventory i ON p.product_id = i.product_id
+    LEFT JOIN order_items oi ON p.product_id = oi.product_id
+    LEFT JOIN orders o ON oi.order_id = o.order_id
+    GROUP BY p.product_id, p.product_name, c.category_name, i.quantity_on_hand
+)
+SELECT 
+    *,
+    CASE 
+        WHEN units_sold_last_30_days > 0 
+        THEN ROUND(quantity_on_hand / (units_sold_last_30_days / 30.0), 1)
+        ELSE NULL 
+    END as days_of_inventory,
+    CASE 
+        WHEN units_sold_last_30_days > 20 THEN 'High Demand'
+        WHEN units_sold_last_30_days > 5 THEN 'Medium Demand'
+        WHEN units_sold_last_30_days > 0 THEN 'Low Demand'
+        ELSE 'No Sales'
+    END as demand_category
+FROM product_sales
+ORDER BY days_of_inventory;
+
+-- 6.6 Recency-Frequency-Monetary (RFM) Analysis
+WITH rfm_calc AS (
+    SELECT 
+        u.user_id,
+        CONCAT(u.first_name, ' ', u.last_name) as customer_name,
+        DATEDIFF(NOW(), COALESCE(MAX(o.order_date), NOW())) as recency,
+        COALESCE(COUNT(DISTINCT o.order_id), 0) as frequency,
+        COALESCE(SUM(o.total_amount), 0) as monetary,
+        NTILE(5) OVER (ORDER BY DATEDIFF(NOW(), COALESCE(MAX(o.order_date), NOW())) DESC) as r_score,
+        NTILE(5) OVER (ORDER BY COALESCE(COUNT(DISTINCT o.order_id), 0) ASC) as f_score,
+        NTILE(5) OVER (ORDER BY COALESCE(SUM(o.total_amount), 0) ASC) as m_score
+    FROM users u
+    LEFT JOIN orders o ON u.user_id = o.user_id AND o.order_status = 'delivered'
+    GROUP BY u.user_id, u.first_name, u.last_name
+),
+rfm_scores AS (
+    SELECT 
+        *,
+        CONCAT(r_score, f_score, m_score) as rfm_cell,
+        (r_score + f_score + m_score) / 3.0 as avg_score
+    FROM rfm_calc
+)
+SELECT 
+    *,
+    CASE 
+        WHEN r_score >= 4 AND f_score >= 4 AND m_score >= 4 THEN 'Champions'
+        WHEN r_score >= 3 AND f_score >= 3 AND m_score >= 3 THEN 'Loyal Customers'
+        WHEN r_score >= 3 AND f_score >= 2 AND m_score >= 2 THEN 'Potential Loyalists'
+        WHEN r_score >= 4 AND f_score <= 2 AND m_score <= 2 THEN 'New Customers'
+        WHEN r_score <= 2 AND f_score >= 4 AND m_score >= 4 THEN 'At Risk'
+        WHEN r_score <= 2 AND f_score <= 2 AND m_score <= 2 THEN 'Lost'
+        ELSE 'Others'
+    END as customer_segment
+FROM rfm_scores
+ORDER BY avg_score DESC;
+
+-- 6.7 Month-over-Month Growth Analysis
+WITH monthly_metrics AS (
+    SELECT 
+        DATE_FORMAT(order_date, '%Y-%m') as month,
+        COUNT(DISTINCT order_id) as orders,
+        COUNT(DISTINCT user_id) as customers,
+        SUM(total_amount) as revenue,
+        COALESCE(SUM(total_amount) / NULLIF(COUNT(DISTINCT order_id), 0), 0) as aov
+    FROM orders
+    WHERE order_status = 'delivered'
+    GROUP BY DATE_FORMAT(order_date, '%Y-%m')
+),
+growth_metrics AS (
+    SELECT 
+        month,
+        orders,
+        customers,
+        ROUND(revenue, 2) as revenue,
+        ROUND(aov, 2) as aov,
+        ROUND(100.0 * (orders - LAG(orders) OVER (ORDER BY month)) / 
+              NULLIF(LAG(orders) OVER (ORDER BY month), 0), 2) as orders_growth_pct,
+        ROUND(100.0 * (revenue - LAG(revenue) OVER (ORDER BY month)) / 
+              NULLIF(LAG(revenue) OVER (ORDER BY month), 0), 2) as revenue_growth_pct
+    FROM monthly_metrics
+)
+SELECT * FROM growth_metrics;
+
+-- =============================================================================
+-- SECTION 7: BUSINESS REPORTS
+-- =============================================================================
+
+-- 7.1 Executive Dashboard
+SELECT 
+    'TOTAL REVENUE' as metric,
+    CONCAT('$', FORMAT(SUM(total_amount), 2)) as value
+FROM orders 
+WHERE order_status = 'delivered'
+UNION ALL
+SELECT 
+    'TOTAL ORDERS',
+    FORMAT(COUNT(*), 0)
+FROM orders 
+WHERE order_status = 'delivered'
+UNION ALL
+SELECT 
+    'AVG ORDER VALUE',
+    CONCAT('$', FORMAT(AVG(total_amount), 2))
+FROM orders 
+WHERE order_status = 'delivered'
+UNION ALL
+SELECT 
+    'TOTAL CUSTOMERS',
+    FORMAT(COUNT(DISTINCT user_id), 0)
+FROM orders 
+WHERE order_status = 'delivered'
+UNION ALL
+SELECT 
+    'REPEAT CUSTOMER RATE',
+    CONCAT(
+        ROUND(100.0 * (
+            SELECT COUNT(DISTINCT user_id) 
+            FROM (
+                SELECT user_id, COUNT(*) as order_count
+                FROM orders 
+                WHERE order_status = 'delivered'
+                GROUP BY user_id
+                HAVING COUNT(*) > 1
+            ) as repeat_customers
+        ) / NULLIF(COUNT(DISTINCT user_id), 0), 2),
+        '%'
+    )
+FROM orders 
+WHERE order_status = 'delivered';
+
+-- 7.2 Top Products by Revenue
+SELECT 
+    p.product_name,
+    c.category_name,
+    COUNT(DISTINCT oi.order_id) as times_ordered,
+    SUM(oi.quantity) as total_units_sold,
+    CONCAT('$', FORMAT(SUM(oi.total_price), 2)) as total_revenue,
+    ROUND(AVG(pr.rating), 2) as avg_rating
+FROM products p
+JOIN categories c ON p.category_id = c.category_id
+LEFT JOIN order_items oi ON p.product_id = oi.product_id
+LEFT JOIN orders o ON oi.order_id = o.order_id AND o.order_status = 'delivered'
+LEFT JOIN product_reviews pr ON p.product_id = pr.product_id
+GROUP BY p.product_id, p.product_name, c.category_name
+ORDER BY SUM(oi.total_price) DESC
+LIMIT 10;
+
+-- 7.3 Customer Lifetime Value Report
+SELECT 
+    CONCAT(u.first_name, ' ', u.last_name) as customer_name,
+    u.email,
+    COUNT(DISTINCT o.order_id) as total_orders,
+    CONCAT('$', FORMAT(COALESCE(SUM(o.total_amount), 0), 2)) as lifetime_value,
+    CONCAT('$', FORMAT(COALESCE(AVG(o.total_amount), 0), 2)) as avg_order_value,
+    MIN(o.order_date) as first_purchase,
+    MAX(o.order_date) as last_purchase,
+    DATEDIFF(COALESCE(MAX(o.order_date), NOW()), COALESCE(MIN(o.order_date), NOW())) as customer_lifetime_days
+FROM users u
+LEFT JOIN orders o ON u.user_id = o.user_id AND o.order_status = 'delivered'
+GROUP BY u.user_id, u.first_name, u.last_name, u.email
+HAVING total_orders > 0
+ORDER BY SUM(o.total_amount) DESC;
+
+-- 7.4 Inventory Status Report
+SELECT 
+    p.product_name,
+    p.sku,
+    i.quantity_on_hand as current_stock,
+    i.quantity_reserved as reserved,
+    (i.quantity_on_hand - i.quantity_reserved) as available,
+    COALESCE(SUM(
+        CASE 
+            WHEN o.order_status = 'delivered'
+            AND o.order_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+            THEN oi.quantity
+            ELSE 0
+        END
+    ), 0) as sold_last_30_days,
+    i.reorder_level,
+    i.reorder_quantity,
+    CASE 
+        WHEN (i.quantity_on_hand - i.quantity_reserved) <= i.reorder_level THEN 'ORDER NOW'
+        WHEN (i.quantity_on_hand - i.quantity_reserved) <= i.reorder_level * 2 THEN 'Order Soon'
+        ELSE 'OK'
+    END as action_required
+FROM products p
+JOIN inventory i ON p.product_id = i.product_id
+LEFT JOIN order_items oi ON p.product_id = oi.product_id
+LEFT JOIN orders o ON oi.order_id = o.order_id
+GROUP BY p.product_id, p.product_name, p.sku, i.quantity_on_hand, 
+         i.quantity_reserved, i.reorder_level, i.reorder_quantity
+ORDER BY action_required, available;
+
+-- 7.5 Category Performance Summary
+SELECT 
+    c.category_name,
+    COUNT(DISTINCT p.product_id) as products_in_category,
+    COUNT(DISTINCT oi.order_id) as total_orders,
+    COALESCE(SUM(oi.quantity), 0) as units_sold,
+    CONCAT('$', FORMAT(COALESCE(SUM(oi.total_price), 0), 2)) as revenue,
+    ROUND(COALESCE(AVG(pr.rating), 0), 2) as avg_category_rating
+FROM categories c
+LEFT JOIN products p ON c.category_id = p.category_id
+LEFT JOIN order_items oi ON p.product_id = oi.product_id
+LEFT JOIN orders o ON oi.order_id = o.order_id AND o.order_status = 'delivered'
+LEFT JOIN product_reviews pr ON p.product_id = pr.product_id
+GROUP BY c.category_id, c.category_name
+ORDER BY SUM(oi.total_price) DESC;
+
+-- =============================================================================
+-- SECTION 8: PERFORMANCE OPTIMIZATION
+-- =============================================================================
+
+-- 8.1 Create Indexes for Query Performance
+CREATE INDEX idx_orders_date_status ON orders(order_date, order_status);
+CREATE INDEX idx_order_items_order_product ON order_items(order_id, product_id);
+CREATE INDEX idx_reviews_product_rating ON product_reviews(product_id, rating);
+CREATE INDEX idx_inventory_status ON inventory(quantity_on_hand, reorder_level);
+CREATE INDEX idx_orders_user_date ON orders(user_id, order_date);
+CREATE INDEX idx_orders_status_date_user ON orders(order_status, order_date, user_id);
+
+-- 8.2 Daily Sales Materialized View
+CREATE VIEW mv_daily_sales AS
+SELECT 
+    DATE(o.order_date) as sale_date,
+    COUNT(DISTINCT o.order_id) as order_count,
+    COUNT(DISTINCT o.user_id) as customer_count,
+    SUM(o.total_amount) as revenue,
+    SUM(oi.quantity) as items_sold
+FROM orders o
+JOIN order_items oi ON o.order_id = oi.order_id
+WHERE o.order_status = 'delivered'
+GROUP BY DATE(o.order_date);
+
+-- 8.3 Query Performance Analysis
+EXPLAIN
+SELECT 
+    c.category_name,
+    COUNT(DISTINCT o.user_id) as unique_customers,
+    SUM(oi.quantity) as total_units,
+    AVG(oi.unit_price) as avg_price
+FROM categories c
+JOIN products p ON c.category_id = p.category_id
+JOIN order_items oi ON p.product_id = oi.product_id
+JOIN orders o ON oi.order_id = o.order_id
+WHERE o.order_date >= DATE_SUB(NOW(), INTERVAL 90 DAY)
+GROUP BY c.category_name;
+
+-- =============================================================================
+-- SECTION 9: STORED PROCEDURES FOR REGULAR REPORTS
+-- =============================================================================
+
+DELIMITER $$
+
+-- 9.1 Daily Sales Report
+CREATE PROCEDURE sp_daily_sales_report(IN report_date DATE)
+BEGIN
+    SELECT 
+        DATE(o.order_date) as sale_date,
+        HOUR(o.order_date) as hour_of_day,
+        COUNT(DISTINCT o.order_id) as orders,
+        COUNT(DISTINCT o.user_id) as customers,
+        COUNT(DISTINCT oi.product_id) as unique_products,
+        SUM(oi.quantity) as items_sold,
+        SUM(o.total_amount) as revenue,
+        AVG(o.total_amount) as avg_order_value
+    FROM orders o
+    JOIN order_items oi ON o.order_id = oi.order_id
+    WHERE DATE(o.order_date) = report_date
+        AND o.order_status = 'delivered'
+    GROUP BY DATE(o.order_date), HOUR(o.order_date)
+    ORDER BY hour_of_day;
+END$$
+
+-- 9.2 Customer Purchase History
+CREATE PROCEDURE sp_customer_purchase_history(IN p_user_id INT)
+BEGIN
+    SELECT 
+        o.order_id,
+        o.order_date,
+        o.order_status,
+        o.total_amount,
+        GROUP_CONCAT(
+            CONCAT(oi.quantity, 'x ', p.product_name) 
+            SEPARATOR ', '
+        ) as items_purchased,
+        TIMESTAMPDIFF(DAY, o.order_date, NOW()) as days_ago
+    FROM orders o
+    JOIN order_items oi ON o.order_id = oi.order_id
+    JOIN products p ON oi.product_id = p.product_id
+    WHERE o.user_id = p_user_id
+    GROUP BY o.order_id, o.order_date, o.order_status, o.total_amount
+    ORDER BY o.order_date DESC;
+END$$
+
+-- 9.3 Low Stock Alert
+CREATE PROCEDURE sp_low_stock_alert(IN threshold INT)
+BEGIN
+    SELECT 
+        p.product_id,
+        p.product_name,
+        p.sku,
+        i.quantity_on_hand,
+        i.reorder_level,
+        i.quantity_on_hand - i.quantity_reserved as available,
+        COALESCE(s.supplier_name, 'No Supplier') as preferred_supplier,
+        ps.supply_price,
+        ps.lead_time_days
+    FROM products p
+    JOIN inventory i ON p.product_id = i.product_id
+    LEFT JOIN product_suppliers ps ON p.product_id = ps.product_id AND ps.is_preferred = TRUE
+    LEFT JOIN suppliers s ON ps.supplier_id = s.supplier_id
+    WHERE (i.quantity_on_hand - i.quantity_reserved) <= threshold
+    ORDER BY (i.quantity_on_hand - i.quantity_reserved) ASC;
+END$$
+
+DELIMITER ;
+
+-- =============================================================================
+-- SECTION 10: DATA QUALITY CHECKS
+-- =============================================================================
+
+-- 10.1 Orphan Records Check
+SELECT 'Orders without users' as check_name, COUNT(*) as count
+FROM orders o
+LEFT JOIN users u ON o.user_id = u.user_id
+WHERE u.user_id IS NULL
+UNION ALL
+SELECT 'Order items without orders', COUNT(*)
+FROM order_items oi
+LEFT JOIN orders o ON oi.order_id = o.order_id
+WHERE o.order_id IS NULL
+UNION ALL
+SELECT 'Products without categories', COUNT(*)
+FROM products p
+LEFT JOIN categories c ON p.category_id = c.category_id
+WHERE c.category_id IS NULL;
+
+-- 10.2 Data Consistency Checks
+SELECT 
+    SUM(CASE WHEN ABS(o.total_amount - 
+        (oi.order_subtotal + o.tax_amount + o.shipping_amount - o.discount_amount)) > 0.01
+        THEN 1 ELSE 0 END) as inconsistent_totals
+FROM orders o
+JOIN (
+    SELECT order_id, SUM(total_price) as order_subtotal
+    FROM order_items
+    GROUP BY order_id
+) oi ON o.order_id = oi.order_id;
+
+-- 10.3 Duplicate Check
+SELECT 
+    email, 
+    COUNT(*) as duplicate_count
+FROM users
+GROUP BY email
+HAVING COUNT(*) > 1;
+
+-- =============================================================================
+-- SECTION 11: VERIFICATION QUERIES
+-- =============================================================================
+
+-- 11.1 Data Summary
+SELECT 'Total Users' as metric, COUNT(*) as value FROM users
+UNION ALL
+SELECT 'Total Products', COUNT(*) FROM products
+UNION ALL
+SELECT 'Total Orders', COUNT(*) FROM orders
+UNION ALL
+SELECT 'Total Revenue', CONCAT('$', FORMAT(SUM(total_amount), 2)) FROM orders WHERE order_status = 'delivered';
+
+-- 11.2 View Samples
+SELECT 'Daily Sales Summary' as view_name, * FROM daily_sales_summary LIMIT 3;
+SELECT 'Product Performance' as view_name, * FROM product_performance LIMIT 3;
+SELECT 'Category Performance' as view_name, * FROM category_performance LIMIT 3;
+SELECT 'Inventory Status' as view_name, * FROM inventory_status LIMIT 3;
+
+-- 11.3 Test Stored Procedures
+CALL GetTopSellingProducts(5);
+CALL sp_low_stock_alert(20);
+
+-- =============================================================================
+-- PROJECT COMPLETED SUCCESSFULLY
+-- =============================================================================
+SELECT 'E-Commerce Analytics Database Created Successfully' as status;
+SELECT 'Schema includes: Users, Products, Orders, Inventory, Analytics Views' as message;
+SELECT 'Analytics Features: RFM Analysis, Cohort Analysis, Market Basket Analysis, Inventory Turnover' as features;
